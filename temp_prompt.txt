@@ -1,0 +1,630 @@
+<USER_REQUEST>
+We are continuing the Amazon ML Challenge 2026 Business Entity Resolution project.
+
+COMPLETED:
+
+STEP 1 — EDA
+STEP 2 — Text Normalization
+STEP 3 — Sparse Blocking
+STEP 4 — Dense FAISS Blocking
+STEP 5 — Sparse + Dense Candidate Union
+STEP 6 — Pairwise Feature Engineering
+
+Now implement ONLY STEP 7:
+
+XGBOOST PAIRWISE MATCHING MODEL
+
+Create:
+
+notebooks/07_XGBoost_Matching.ipynb
+
+and production-ready utilities:
+
+src/business_entity_resolution/model.py
+
+Create model artifacts such as:
+
+models/xgboost/entity_matcher.json
+experiments/xgboost_training_metrics.json
+experiments/xgboost_feature_importance.csv
+experiments/xgboost_validation_predictions.parquet
+
+Do NOT implement yet:
+
+- hard-negative mining
+- singleton classifier
+- one-to-one post-processing
+- DistilBERT reranking
+- final test inference
+- final matching_results.tsv
+- final competition candidate_pairs.tsv
+
+This notebook is for training and evaluating the initial XGBoost pairwise classifier.
+
+==================================================
+OBJECTIVE
+==================================================
+
+Each row in the Step 6 dataset represents:
+
+Source 1 entity
++
+one candidate from Source 2 or Source 3
+
+and contains 17+ numerical similarity features.
+
+The model must predict:
+
+label = 1 → SAME BUSINESS
+label = 0 → DIFFERENT BUSINESS
+
+The model output should be a probability:
+
+P(SAME BUSINESS)
+
+This probability will later be consumed by Step 8/9.
+
+==================================================
+INPUTS
+==================================================
+
+Load the Step 6 artifacts:
+
+experiments/train_pair_features.parquet
+experiments/validation_pair_features.parquet
+
+or the actual filenames produced by Step 6.
+
+Also load:
+
+experiments/feature_schema.json
+
+Do not rebuild the features inside this notebook unless necessary.
+
+Keep the feature-generation logic in Step 6.
+
+==================================================
+DATA SPLIT / LEAKAGE
+==================================================
+
+Use the entity-level train/validation split already created in Step 6.
+
+IMPORTANT:
+
+The same Source 1 entity must NEVER appear in both training and validation.
+
+Verify this explicitly.
+
+Check:
+
+set(train.source1_entity_id)
+INTERSECTION
+set(validation.source1_entity_id)
+
+must be empty.
+
+If this fails, stop and report the issue.
+
+Do not create a random row-level split.
+
+==================================================
+FEATURE SELECTION
+==================================================
+
+Use only the numerical feature columns created in Step 6.
+
+Exclude metadata columns such as:
+
+source1_entity_id
+candidate_entity_id
+
+Do not use entity IDs as model features.
+
+Exclude any feature that is derived directly or indirectly from ground truth.
+
+The only target-derived field allowed is:
+
+label
+
+Before training, run an explicit leakage check.
+
+==================================================
+DATASET INSPECTION
+==================================================
+
+Report:
+
+- training pair count
+- validation pair count
+- positive pair count
+- negative pair count
+- positive percentage
+- negative percentage
+
+Also report counts separately for:
+
+- S2 candidates
+- S3 candidates
+
+and where useful by observed country values.
+
+==================================================
+CLASS IMBALANCE
+==================================================
+
+The candidate data will likely contain many more negatives than positives.
+
+First calculate the actual imbalance.
+
+Do NOT automatically assume a specific positive/negative ratio.
+
+Test a reasonable baseline approach using XGBoost.
+
+If negative downsampling is needed due to dataset size:
+
+- document the sampling strategy
+- keep all positive pairs
+- use deterministic sampling
+- avoid introducing leakage
+- preserve representative difficult negatives
+
+Do not perform hard-negative mining yet.
+
+That will be Step 8.
+
+If the full training candidate set fits in memory and trains efficiently, prefer using it rather than aggressively downsampling.
+
+==================================================
+MODEL
+==================================================
+
+Use XGBoost for binary classification.
+
+Use:
+
+objective = "binary:logistic"
+
+The model should output probabilities.
+
+Start with a conservative baseline configuration rather than massive hyperparameter search.
+
+For example, investigate a configuration around:
+
+n_estimators
+max_depth
+learning_rate
+subsample
+colsample_bytree
+min_child_weight
+reg_lambda
+reg_alpha
+
+Use a fixed random seed.
+
+Do not assume these exact values are optimal.
+
+==================================================
+TRAINING
+==================================================
+
+Train only on:
+
+X_train
+y_train
+
+Validate only on:
+
+X_validation
+y_validation
+
+Use early stopping if supported by the installed XGBoost version.
+
+Do not use the test dataset.
+
+Save:
+
+models/xgboost/entity_matcher.json
+
+Also save the list and order of feature columns used by the model.
+
+==================================================
+EVALUATION
+==================================================
+
+Do NOT evaluate using plain accuracy alone.
+
+The competition uses macro-averaged F0.5 per Source 1 entity.
+
+Therefore calculate at least:
+
+- pairwise precision
+- pairwise recall
+- pairwise F0.5
+- macro F0.5 at the Source 1 entity level
+
+IMPORTANT:
+
+The official scoring unit is the Source 1 entity, not simply all candidate pairs pooled together.
+
+For validation:
+
+1. Generate predicted probability for every candidate pair.
+2. Apply an INITIAL temporary threshold ONLY for exploratory evaluation.
+3. Group predictions by source1_entity_id.
+4. Compare predicted matched IDs against true matched IDs.
+5. Calculate F0.5 independently for each S1 entity.
+6. Average those entity-level F0.5 values.
+
+Do not treat pooled pairwise F0.5 as the final competition-equivalent metric.
+
+==================================================
+TEMPORARY THRESHOLD
+==================================================
+
+Do NOT finalize the competition threshold in Step 7.
+
+Use a clearly labeled temporary threshold such as 0.5 only for baseline reporting.
+
+The real threshold-selection work will happen later using validation.
+
+Make it explicit in the notebook:
+
+"0.5 is a temporary baseline threshold, not the final selected threshold."
+
+==================================================
+SINGLETON AWARENESS
+==================================================
+
+Do NOT build the singleton classifier yet.
+
+However, because singleton entities are important to the competition:
+
+- identify validation S1 entities whose ground truth has no matches
+- report how often the baseline model produces false matches for them at the temporary threshold
+
+Do not train a singleton gate yet.
+
+This analysis will guide Step 9.
+
+==================================================
+MULTIPLE MATCHES
+==================================================
+
+Do not assume exactly one match per S1.
+
+The model must score every candidate independently.
+
+A Source 1 entity may have:
+
+0
+1
+2
+...
+multiple matches.
+
+Do NOT select only the single highest probability candidate.
+
+For baseline evaluation, every candidate whose probability exceeds the temporary threshold can be considered a predicted match.
+
+The later post-processing stage will handle global consistency.
+
+==================================================
+S2 / S3 SOURCE ANALYSIS
+==================================================
+
+Evaluate the model separately for:
+
+candidate_source = S2
+candidate_source = S3
+
+Report:
+
+- pairwise precision
+- pairwise recall
+- F0.5
+- number of positive pairs
+- number of negative pairs
+
+Also compare probability distributions for S2 and S3 where useful.
+
+Do not assume one source is easier without measuring it.
+
+==================================================
+FEATURE IMPORTANCE
+==================================================
+
+Extract XGBoost feature importance.
+
+Provide at least:
+
+- gain
+- split count / weight if available
+
+Create:
+
+experiments/xgboost_feature_importance.csv
+
+Sort features by importance.
+
+Group important features into:
+
+NAME
+ADDRESS
+STRUCTURED ADDRESS
+DENSE / EMBEDDING
+COUNTRY / META
+MISSINGNESS
+
+Do not claim that feature importance proves causality.
+
+It is only a model diagnostic.
+
+==================================================
+POSITIVE VS NEGATIVE ANALYSIS
+==================================================
+
+Using validation predictions, inspect:
+
+- high-probability true matches
+- high-probability false matches
+- low-probability true matches
+- low-probability true negatives
+
+Especially examine false positives where:
+
+name similarity is high
+but the pair is actually negative.
+
+These will become candidates for Step 8 hard-negative mining.
+
+Create a small reproducible table of difficult validation examples.
+
+Do not modify training data in this step.
+
+==================================================
+PROBABILITY DISTRIBUTION
+==================================================
+
+Plot or summarize predicted probabilities for:
+
+positive pairs
+negative pairs
+
+Look for:
+
+- separation
+- overlap
+- ambiguous region
+
+Do not assume the classes are perfectly separable.
+
+This will inform later threshold optimization.
+
+==================================================
+ABLATION EXPERIMENTS
+==================================================
+
+Run a small set of controlled experiments to understand the contribution of feature groups.
+
+At minimum compare:
+
+MODEL A:
+Name features only
+
+MODEL B:
+Name + Address features
+
+MODEL C:
+Name + Address + structured address
+
+MODEL D:
+Name + Address + structured + dense cosine
+
+MODEL E:
+All available valid features
+
+For each model record:
+
+- training time
+- validation pairwise precision
+- validation pairwise recall
+- validation pairwise F0.5
+- entity-level macro F0.5 at the temporary threshold
+
+Do not perform huge hyperparameter searches.
+
+The objective is to understand feature contribution.
+
+==================================================
+MODEL ROBUSTNESS
+==================================================
+
+Check model behavior on subsets:
+
+- records with postal codes
+- records without postal codes
+- missing addresses
+- non-ASCII names
+- Devanagari names where detectable
+- different country values
+- S2 candidates
+- S3 candidates
+
+Report where the model performs differently.
+
+Do not invent explanations.
+
+==================================================
+OPTIONAL HYPERPARAMETER EXPERIMENT
+==================================================
+
+After the baseline model works, run a small controlled comparison of a few configurations.
+
+For example:
+
+Baseline
+Shallower trees
+Deeper trees
+Different learning rate
+Different min child weight
+
+Use the SAME train/validation split.
+
+Keep the search small enough to remain practical.
+
+Select a baseline candidate for the next stage based on validation evidence.
+
+Do not overfit to many repeated experiments.
+
+==================================================
+MODEL SELECTION
+==================================================
+
+Select the working XGBoost configuration using validation evidence.
+
+Do NOT use test data.
+
+Do NOT make a final leaderboard claim.
+
+Document:
+
+- parameters
+- feature set
+- training pair count
+- validation pair count
+- temporary threshold
+- entity-level macro F0.5
+
+==================================================
+OUTPUT ARTIFACTS
+==================================================
+
+Create:
+
+notebooks/07_XGBoost_Matching.ipynb
+
+src/business_entity_resolution/model.py
+
+models/xgboost/entity_matcher.json
+
+experiments/xgboost_training_metrics.json
+
+experiments/xgboost_feature_importance.csv
+
+experiments/xgboost_validation_predictions.parquet
+
+If useful:
+
+experiments/xgboost_experiment_results.csv
+
+==================================================
+PERFORMANCE
+==================================================
+
+The candidate dataset may be very large.
+
+Do not:
+
+- create pairwise matrices
+- rebuild S1 × S2
+- rebuild S1 × S3
+- duplicate the entire dataset unnecessarily
+
+Use efficient Parquet loading.
+
+If training requires chunked preparation, preserve the same feature schema and labels.
+
+Use compact numerical dtypes where practical.
+
+==================================================
+NOTEBOOK STRUCTURE
+==================================================
+
+07_XGBoost_Matching.ipynb
+
+1. Objective
+2. Load train/validation features
+3. Verify entity-level split
+4. Check class balance
+5. Check feature leakage
+6. Prepare X and y
+7. Train baseline XGBoost
+8. Validation probability predictions
+9. Temporary-threshold evaluation
+10. Entity-level macro F0.5
+11. S2 vs S3 analysis
+12. Singleton baseline analysis
+13. Feature importance
+14. Positive/negative probability distributions
+15. Difficult pair analysis
+16. Feature-group ablation
+17. Small hyperparameter comparison
+18. Select working model
+19. Save model
+20. Save validation predictions
+21. Findings
+
+==================================================
+FINAL REPORT
+==================================================
+
+At the end report:
+
+Training:
+- number of entities
+- number of candidate pairs
+- positive pairs
+- negative pairs
+
+Validation:
+- number of entities
+- number of candidate pairs
+- positive pairs
+- negative pairs
+
+Model:
+- XGBoost parameters
+- number of features
+
+Performance:
+- pairwise precision
+- pairwise recall
+- pairwise F0.5
+- entity-level macro F0.5
+- singleton false-match rate
+
+Also report:
+
+- strongest feature groups
+- most important individual features
+- difficult false positives
+- difficult false negatives
+- S2 vs S3 performance
+- multilingual/non-ASCII behavior
+- postal/address behavior
+
+IMPORTANT:
+This is STEP 7 only.
+
+We are training the first actual matching model.
+
+Do NOT perform hard-negative mining yet.
+Do NOT build the singleton classifier yet.
+Do NOT apply one-to-one post-processing yet.
+Do NOT select the final competition threshold yet.
+Do NOT generate final test predictions.
+
+The next step will use the mistakes from this model for hard-negative mining and additional model improvement.
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-09-27T17:29:34+05:30.
+
+The user's current state is as follows:
+Active Document: /c:/Users/Daksh/Downloads/6ab10eb3b23ba_student_resource/notebooks/06_Feature_Engineering.ipynb (LANGUAGE_UNSPECIFIED)
+Cursor is on line: 1
+Other open documents:
+- c:\Users\Daksh\Downloads\6ab10eb3b23ba_student_resource\src\business_entity_resolution\features.py (LANGUAGE_PYTHON)
+</ADDITIONAL_METADATA>
+<USER_SETTINGS_CHANGE>
+The user changed setting `Model Selection` from Gemini 3.6 Flash (Low) to Gemini 3.1 Pro (High). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.
+</USER_SETTINGS_CHANGE>
