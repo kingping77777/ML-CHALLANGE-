@@ -17,6 +17,9 @@ class DenseBlocker:
         else:
             self.device = device
             
+        if self.device == 'cpu':
+            torch.set_num_threads(os.cpu_count() or 8)
+            
         print(f"Loading SentenceTransformer: {model_name} on {self.device}")
         self.model = SentenceTransformer(model_name, device=self.device)
         self.embedding_dim = self.model.get_sentence_embedding_dimension()
